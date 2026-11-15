@@ -1,6 +1,6 @@
 # my_team.py
 # ---------------
-# Equipo v4.1 para el EUTOPIA Pacman Contest (Autonomous Systems, EMAI 2026-27).
+# Equipo v4.2 para el EUTOPIA Pacman Contest (Autonomous Systems, EMAI 2026-27).
 #
 # Estructura:
 #   - PARAMS: números que controlan el comportamiento. Los ajusta
@@ -65,7 +65,7 @@ PARAMS = {
     'capsule_contain': 0,      # 1 = contención de la cápsula: si el invasor está en su radio y llega antes que yo,
                                #     no le presiono; rodeo hasta quedar más cerca de ella que él (diseño nuestro)
     'contain_dist': 3,         # ...distancia mínima al invasor mientras rodeo
-    'seal': 0,                 # 1 = sellar y apretar: si (con mi compañero defensor) llego a TODAS sus puertas antes
+    'seal': 2,                 # 1 = sellar y apretar: si (con mi compañero defensor) llego a TODAS sus puertas antes
                                #     o a la vez que él, me acerco sin abrir ninguna; si no se puede, como antes
                                # 2 = además sella nuestras cápsulas (llegar ESTRICTAMENTE antes); si no puede,
                                #     solo aprieta (sin cápsulas) cuando está a más de capsule_radius de todas
