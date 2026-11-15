@@ -5,7 +5,8 @@ calculadas sobre el estado REAL de cada jugada (ver tools/run_one.py), no estima
   - comida rival depositada por partida
   - invasores comidos por partida (pacmans rivales comidos por nuestros fantasmas)
   - turnos medios que un invasor rival pasa en nuestro campo por incursión
-y también: nuestros pacmans comidos, comida que perdemos al morir, y tiempo máximo por partida.
+y también: nuestros pacmans comidos, comida que perdemos al morir, carga media del invasor al ser
+comido (carga/com) y tiempo máximo por partida.
 
 Uso (desde la raíz del repo, con el venv activado):
     python tools/defensa_bench.py                         # liga por defecto, my_team.py actual
@@ -71,6 +72,7 @@ def play(job):
         'our_deaths': g('pac_deaths', us),           # nuestros pacmans comidos
         'ghost_eaten': g('ghost_eaten', us),         # nuestros fantasmas comidos (asustados)
         'lost_carry': g('lost_carry', us),
+        'their_lost_carry': g('lost_carry', them),   # comida que llevaban los invasores que nos comemos
         'inv_turns': g('pac_turns', them),
         'inv_episodes': g('pac_episodes', them),
         'caps_lost': g('capsules_lost', us),         # cápsulas nuestras que nos comen
@@ -98,6 +100,9 @@ def summarize(rows):
         'our_deaths': sum(r['our_deaths'] for r in rows) / n,
         'lost_carry': sum(r['lost_carry'] for r in rows) / n,
         'inv_len': (sum(r['inv_turns'] for r in rows) / eps) if eps else 0.0,
+        # Carga media del invasor al ser comido (None en JSON antiguos sin el campo).
+        'carry_eaten': (sum(r['their_lost_carry'] for r in rows) / max(1, sum(r['invaders_eaten'] for r in rows)))
+        if all('their_lost_carry' in r for r in rows) else None,
         'inv_eps': eps / n,
         'caps_lost': sum(r['caps_lost'] for r in rows) / n,
         'caps_taken': sum(r['caps_taken'] for r in rows) / n,
@@ -107,7 +112,7 @@ def summarize(rows):
 
 
 HDR = (f"{'':34s} {'N':>4s} {'V-E-D':>9s} {'pts':>5s} {'marg':>6s} {'ellos dep.':>10s} {'inv.comidos':>11s} "
-       f"{'muertes':>7s} {'turnos/inv':>10s} {'cáps.perd':>9s} {'asust.':>6s}")
+       f"{'muertes':>7s} {'turnos/inv':>10s} {'cáps.perd':>9s} {'asust.':>6s} {'carga/com':>9s}")
 
 
 def fmt(name, s):
@@ -115,7 +120,8 @@ def fmt(name, s):
         return f'{name:34s} (sin partidas)'
     return (f"{name:34s} {s['n']:4d} {s['w']:3d}-{s['t']:2d}-{s['l']:2d} {s['pts']:5.2f} {s['margin']:+6.1f} "
             f"{s['their_returned']:10.1f} {s['invaders_eaten']:11.2f} {s['our_deaths']:7.2f} {s['inv_len']:10.1f} "
-            f"{s['caps_lost']:9.2f} {s['our_scared']:6.1f}")
+            f"{s['caps_lost']:9.2f} {s['our_scared']:6.1f} "
+            f"{'n/d' if s.get('carry_eaten') is None else format(s['carry_eaten'], '.1f'):>9s}")
 
 
 def compare(a_path, b_path):
