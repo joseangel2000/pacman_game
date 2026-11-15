@@ -1,6 +1,6 @@
 # my_team.py
 # ---------------
-# Equipo v4 para el EUTOPIA Pacman Contest (Autonomous Systems, EMAI 2026-27).
+# Equipo v4.1 para el EUTOPIA Pacman Contest (Autonomous Systems, EMAI 2026-27).
 #
 # Estructura:
 #   - PARAMS: números que controlan el comportamiento. Los ajusta
@@ -55,13 +55,30 @@ PARAMS = {
     'intercept_pick': 0,       # 0 = casilla factible más cercana a la salida, 1 = la más cercana al invasor
     'intercept_hidden': 1,     # 1 = también con invasor solo estimado (no visto)
     'chase_dist': 2,           # a esta distancia o menos de un invasor visible, persecución directa
+    'intercept_fallback': 1,   # 1 = libro p.1: si no llego antes a ninguna casilla de su ruta, voy a la puerta más cercana a él
     'pocket_trap': 1,          # 1 = si el invasor está en un callejón, su "salida" es la boca del callejón
     'pocket_kill': 0,          # 1 = invasor visible en un callejón y llego a su boca antes que él: entro a por él
     'capsule_guard': 0,        # 1 = proteger nuestra cápsula interponiéndonos entre el invasor y ella
+                               # 2 = versión del libro (p.3): también si la cápsula está más cerca de él que de mí;
+                               #     si no llego antes a su ruta, me pongo en la vecina de la cápsula de su lado
     'capsule_radius': 6,       # ...cuando el invasor está a esta distancia de la cápsula o menos
+    'capsule_contain': 0,      # 1 = contención de la cápsula: si el invasor está en su radio y llega antes que yo,
+                               #     no le presiono; rodeo hasta quedar más cerca de ella que él (diseño nuestro)
+    'contain_dist': 3,         # ...distancia mínima al invasor mientras rodeo
+    'seal': 0,                 # 1 = sellar y apretar: si (con mi compañero defensor) llego a TODAS sus puertas antes
+                               #     o a la vez que él, me acerco sin abrir ninguna; si no se puede, como antes
+                               # 2 = además sella nuestras cápsulas (llegar ESTRICTAMENTE antes); si no puede,
+                               #     solo aprieta (sin cápsulas) cuando está a más de capsule_radius de todas
+    'seal_press': 0,           # 0 = sellando, preferir margen >= 1 y luego acercarse
+                               # 1 = con el invasor VISIBLE, acercarse manda; 2 = acercarse manda siempre
+                               #     (bloqueo medido contra lorecleme: invasor oculto quieto y sellado ~500 turnos)
+    'seal_patience': 0,        # >0 = si sellando no me acerco a él en estos turnos seguidos, dejo de sellar hasta que
+                               #     acabe la invasión (vuelvo a v4.1). 0 = sin límite
     'gates': 0,                # 1 = sin invasores, esperar en el punto que cubre las puertas ponderadas por comida/rival
     'gate_enemy_w': 2.0,       # ...peso de la cercanía del rival a cada puerta
     'zone_split': 0,           # 1 = con dos defensores, cada uno cubre las puertas más cercanas a él
+    'patrol_mode': 0,          # sin invasores: 0 = frontera frente al rival estimado más cercano (v3)
+                               # 1 = libro p.7 "no morder el amago": casilla que minimiza la peor distancia a las puertas de los dos rivales
     'leash_mode': 1,           # incursión del defensor: 0 = libre, 1 = solo si vuelve antes que el rival, 2 = solo comida pegada a la frontera
     'leash_margin': 4,         # modo 1: pasos de margen sobre la llegada estimada del rival a nuestra frontera
     'leash_k': 4,              # modo 2: distancia máxima a nuestra frontera de la comida permitida
@@ -337,6 +354,9 @@ class SmartAgent(CaptureAgent):
         self.commit_target = None   # comida elegida para entrar por otro sitio si estamos atascados
         self.commit_until = None
         self.stuck_defend_until = None  # timeleft hasta el que el atacante atascado defiende
+        self.contain_cap = None     # cápsula que estamos conteniendo (histéresis de capsule_contain)
+        self.seal_best = None       # menor distancia al invasor conseguida sellando (seal_patience)
+        self.seal_stall = 0         # turnos seguidos sellando sin mejorar esa distancia
 
     def register_initial_state(self, game_state):
         CaptureAgent.register_initial_state(self, game_state)  # precalcula distancias del laberinto
@@ -506,16 +526,18 @@ class SmartAgent(CaptureAgent):
             return Directions.STOP
         return self.bfs_first_action(game_state, [cell], self.enemy_side if blocked is None else blocked)
 
-    def route_cell(self, my_pos, ipos, goal, slack, pick):
+    def route_cell(self, my_pos, ipos, goal, slack, pick, min_goal_dist=0):
         """Casilla de la ruta ipos -> goal (camino más corto del invasor) a la que
         llego antes que él (my_d <= inv_d + slack). None si no llego a ninguna.
-        pick 0: la más cercana a goal (cierra la salida); pick 1: la más cercana al invasor."""
+        pick 0: la más cercana a goal (cierra la salida); pick 1: la más cercana al invasor.
+        min_goal_dist: descarta casillas a menos de esa distancia de goal."""
         total = self.dist(ipos, goal)
         best, best_key = None, None
         for c in self.home_set:
             di = self.dist(ipos, c)
-            if di + self.dist(c, goal) != total:
-                continue  # no está en el camino más corto del invasor
+            dg = self.dist(c, goal)
+            if di + dg != total or dg < min_goal_dist:
+                continue  # no está en el camino más corto del invasor (o es la propia meta)
             dm = self.dist(my_pos, c)
             if dm > di + slack:
                 continue  # él llega antes que yo
@@ -534,25 +556,135 @@ class SmartAgent(CaptureAgent):
         goal = self.invader_exit(ipos)
         cell = self.route_cell(my_pos, ipos, goal, PARAMS['intercept_slack'], PARAMS['intercept_pick'])
         if cell is None:
+            if PARAMS['intercept_fallback']:
+                # Libro p.1: no llego antes a ninguna casilla de su ruta -> me pongo en la casilla
+                # de frontera (puerta) más cercana a él y le cierro la salida.
+                gate = min(self.gates, key=lambda g: self.dist(ipos, g))
+                return self.step_toward(game_state, gate)
             return None
         return self.step_toward(game_state, cell)
 
     def capsule_guard_action(self, game_state, my_pos, invaders):
         """Si un invasor se acerca a nuestra cápsula, nos ponemos en su camino hacia ella."""
         caps = self.get_capsules_you_are_defending(game_state)
+        mode = PARAMS['capsule_guard']
         best = None
         for cap in caps:
             for inv in invaders:
                 d = self.dist(inv[0], cap)
-                if d <= PARAMS['capsule_radius'] and (best is None or d < best[0]):
+                hot = d <= PARAMS['capsule_radius'] or (mode == 2 and d < self.dist(my_pos, cap))
+                if hot and (best is None or d < best[0]):
                     best = (d, cap, inv[0])
         if best is None:
             return None
         _, cap, ipos = best
-        cell = self.route_cell(my_pos, ipos, cap, PARAMS['intercept_slack'], 0)
+        if mode != 2:
+            cell = self.route_cell(my_pos, ipos, cap, PARAMS['intercept_slack'], 0)
+            if cell is None:
+                return None
+            return self.step_toward(game_state, cell)
+        # Modo 2 (libro p.3). Nunca nos quedamos SOBRE la cápsula: en apply_action el pacman
+        # se la come (consume) antes de check_death, así que nos asusta y nos come él.
+        cell = self.route_cell(my_pos, ipos, cap, PARAMS['intercept_slack'], 0, min_goal_dist=1)
         if cell is None:
-            return None
+            # Él está más cerca (desigualdad triangular: ninguna casilla de su ruta es mía).
+            # Vamos a la vecina de la cápsula por la que llegaría él, para estar en medio cuanto antes.
+            nbrs = [n for n in Actions.get_legal_neighbors(cap, self.walls) if n != cap and n in self.home_set]
+            if not nbrs:
+                return None
+            d_cap = self.dist(ipos, cap)
+            on_route = [n for n in nbrs if self.dist(ipos, n) + 1 == d_cap] or nbrs
+            cell = min(on_route, key=lambda n: self.dist(my_pos, n))
         return self.step_toward(game_state, cell)
+
+    def seal_action(self, game_state, my_pos, ipos, mate_pos, caps=(), visible=False):
+        """Sellar y apretar. Extiende el punto 1 del libro ("le cierras la salida") a TODAS sus
+        salidas, con la idea de región de dominancia de pursuit-evasion. Margen de una casilla n:
+        min sobre nuestras puertas g de d(él, g) - d(nosotros, g), donde "nosotros" es el mejor de
+        n y mi compañero defensor. Con margen >= 0 no puede salir por ninguna puerta: si él llega
+        a la puerta a la vez que yo, me lo como antes de que cruce (check_death tras cada
+        movimiento; un fantasma no asustado se come al pacman). Entre mis movimientos con margen
+        >= 0 prefiero los de margen >= 1 (aguanta su siguiente paso) y, a igualdad, el que más me
+        acerca a él. None si ningún movimiento sella. ipos puede ser una ESTIMACIÓN.
+        caps: cápsulas que también hay que sellar. Ahí el empate NO vale: el pacman se come la
+        cápsula (consume) antes de check_death, así que hay que llegar estrictamente antes."""
+        gates = list(self.gates) + list(caps)
+        strict = [0] * len(self.gates) + [1] * len(caps)
+        d_inv = [self.dist(ipos, g) - strict[k] for k, g in enumerate(gates)]
+        d_mate = [self.dist(mate_pos, g) for g in gates] if mate_pos is not None else None
+        best, best_key = None, None
+        for a in game_state.get_legal_actions(self.index):
+            n = Actions.get_successor(my_pos, a)
+            n = (int(n[0]), int(n[1]))
+            if n in self.enemy_side:
+                continue
+            m = None
+            for k, g in enumerate(gates):
+                ours = self.dist(n, g)
+                if d_mate is not None and d_mate[k] < ours:
+                    ours = d_mate[k]
+                v = d_inv[k] - ours
+                if m is None or v < m:
+                    m = v
+                if m < 0:
+                    break
+            if m is None or m < 0:
+                continue
+            if PARAMS['seal_press'] == 2 or (visible and PARAMS['seal_press'] == 1):
+                key = (self.dist(n, ipos), -min(m, 1))
+            else:
+                key = (-min(m, 1), self.dist(n, ipos))
+            if best_key is None or key < best_key:
+                best, best_key = a, key
+        return best
+
+    def capsule_contain_action(self, game_state, my_pos, ipos, can_eat):
+        """Contención de la cápsula. Diseño nuestro (HIPÓTESIS), inspirado en el juego de "guardar un
+        objetivo" (Isaacs): la cápsula solo está a salvo si queda en MI región de dominancia, es decir,
+        si llego a su ruta hacia ella antes que él. Medido contra greedy_v4: al entrar en el radio de la
+        cápsula casi nunca estamos más cerca que él, y en ~50-60 % de las cápsulas perdidas teníamos un
+        fantasma a <= 3 justo antes. Por eso, si él gana la carrera, no le presionamos: rodeamos.
+        ipos puede ser una ESTIMACIÓN del tracker. Devuelve None si no hay cápsula en juego."""
+        caps = self.get_capsules_you_are_defending(game_state)
+        if not caps:
+            self.contain_cap = None
+            return None
+        # Histéresis: entramos a capsule_radius y salimos a capsule_radius + 2 (evita oscilar).
+        radius = PARAMS['capsule_radius'] + (2 if self.contain_cap is not None else 0)
+        cap = min(caps, key=lambda c: self.dist(ipos, c))
+        d_inv = self.dist(ipos, cap)
+        if d_inv > radius:
+            self.contain_cap = None
+            return None
+        self.contain_cap = cap
+        if can_eat:
+            return None  # puedo comérmelo en este movimiento: lo hace la persecución normal
+        # 1) Si llego antes que él a alguna casilla de su ruta a la cápsula (sin pisar la cápsula:
+        #    consume va antes que check_death), me pongo ahí: le mantengo "delante".
+        cell = self.route_cell(my_pos, ipos, cap, 0, 0, min_goal_dist=1)
+        if cell is not None:
+            return self.step_toward(game_state, cell)
+        # 2) Él gana la carrera: rodeo sin acercarme a menos de contain_dist hasta una casilla
+        #    que esté más cerca de la cápsula que él.
+        k = PARAMS['contain_dist']
+        near = self.danger_zone([ipos], k - 1)
+        if my_pos not in near:
+            targets = [c for c in self.home_set if c not in near and self.dist(c, cap) < d_inv]
+            act = self.bfs_first_action(game_state, targets, self.enemy_side | near)
+            if act is not None:
+                return act
+            return Directions.STOP
+        # Demasiado cerca: me separo sin cruzar al campo rival.
+        best, best_d = Directions.STOP, self.dist(my_pos, ipos)
+        for a in game_state.get_legal_actions(self.index):
+            nxt = Actions.get_successor(my_pos, a)
+            nxt = (int(nxt[0]), int(nxt[1]))
+            if nxt in self.enemy_side:
+                continue
+            d = self.dist(nxt, ipos)
+            if d > best_d:
+                best, best_d = a, d
+        return best
 
     def rival_eta(self, game_state):
         """Pasos que tardaría en llegar a nuestra frontera el primer rival que aún es fantasma:
@@ -794,6 +926,9 @@ class SmartAgent(CaptureAgent):
                 if est is not None:
                     invaders.append((est, st.num_carrying, False))
 
+        if not invaders:
+            self.contain_cap = None
+            self.seal_best, self.seal_stall = None, 0
         if invaders:
             mate = self.teammate(game_state)
             mate_pos = game_state.get_agent_position(mate)
@@ -813,10 +948,36 @@ class SmartAgent(CaptureAgent):
             mate_closer = mate_defends and len(invaders) == 1 \
                 and self.dist(mate_pos, tpos) < self.dist(my_pos, tpos)
 
+            if PARAMS['capsule_contain'] and my_state.scared_timer == 0:
+                can_eat = target[2] and self.dist(my_pos, tpos) <= 1
+                act = self.capsule_contain_action(game_state, my_pos, tpos, can_eat)
+                if act is not None:
+                    return act
+
+            give_up = PARAMS['seal_patience'] and self.seal_stall >= PARAMS['seal_patience']
+            if PARAMS['seal'] and my_state.scared_timer == 0 and not give_up \
+                    and not (target[2] and self.dist(my_pos, tpos) <= 1):
+                # (Si está a 1 y lo vemos, la persecución directa de abajo se lo come.)
+                mst = game_state.get_agent_state(mate)
+                seal_mate = mate_pos if (mate_defends and len(invaders) == 1 and not mst.is_pacman
+                                         and mst.scared_timer == 0) else None
+                caps = self.get_capsules_you_are_defending(game_state) if PARAMS['seal'] == 2 else []
+                act = self.seal_action(game_state, my_pos, tpos, seal_mate, caps, target[2])
+                if act is None and caps and all(self.dist(tpos, c) > PARAMS['capsule_radius'] for c in caps):
+                    act = self.seal_action(game_state, my_pos, tpos, seal_mate, (), target[2])
+                if act is not None:
+                    d_now = self.dist(my_pos, tpos)
+                    if self.seal_best is None or d_now < self.seal_best:
+                        self.seal_best, self.seal_stall = d_now, 0
+                    else:
+                        self.seal_stall += 1
+                    return act
+
             if PARAMS['pocket_kill'] and my_state.scared_timer == 0 and target[2] and not mate_closer \
                     and tpos in self.pockets:
                 # Callejón de 1 casilla de ancho: si llego a la boca antes de que él pueda salir,
-                # no puede cruzarse conmigo (el que entra en la casilla del otro es el que come: check_death).
+                # no puede cruzarse conmigo (check_death se evalúa tras cada movimiento). Al coincidir
+                # en una casilla, un fantasma no asustado se come al pacman, se mueva quien se mueva.
                 mouth = self.pocket_mouth.get(tpos)
                 if mouth is not None and self.dist(my_pos, mouth) <= self.dist(tpos, mouth):
                     act = self.bfs_first_action(game_state, [tpos], self.enemy_side)
@@ -828,6 +989,13 @@ class SmartAgent(CaptureAgent):
                 # y el otro se interpone (cápsula o ruta de huida).
                 i_cut = mate_closer or not (mate_defends and len(invaders) == 1)
                 close = target[2] and self.dist(my_pos, tpos) <= PARAMS['chase_dist']
+                if PARAMS['capsule_guard'] == 2 and i_cut and close and self.dist(my_pos, tpos) > 1:
+                    # Libro p.3: con la cápsula en juego, ponerse en medio tiene prioridad sobre
+                    # perseguirle (salvo que pueda comérmelo en este movimiento). Medido: en ~50 % de
+                    # las cápsulas perdidas teníamos un fantasma a <= 3 justo antes (la usa para huir).
+                    act = self.capsule_guard_action(game_state, my_pos, invaders)
+                    if act is not None:
+                        return act
                 if i_cut and not close:
                     if PARAMS['capsule_guard']:
                         act = self.capsule_guard_action(game_state, my_pos, invaders)
@@ -889,7 +1057,15 @@ class SmartAgent(CaptureAgent):
         # Sin invasores: patrullar la frontera cerca de donde estimamos al rival.
         guesses = [self.tracker.most_likely(i) for i in self.get_opponents(game_state)]
         guesses = [g for g in guesses if g is not None]
-        if guesses:
+        if guesses and PARAMS['patrol_mode'] == 1:
+            # Libro p.7: si los rivales están estimados frente a puertas distintas, no irse a un
+            # extremo. Casilla de frontera que minimiza la PEOR distancia a sus puertas; a igualdad,
+            # la más cercana a la puerta más amenazada.
+            their_gates = list({min(self.gates, key=lambda gt: self.dist(g, gt)) for g in guesses})
+            first = min(their_gates, key=lambda gt: min(self.dist(g, gt) for g in guesses))
+            post = min(self.home_cells, key=lambda h: (max(self.dist(h, gt) for gt in their_gates),
+                                                       self.dist(h, first)))
+        elif guesses:
             nearest_enemy = min(guesses, key=lambda g: min(self.dist(g, h) for h in self.home_cells))
             post = min(self.home_cells, key=lambda h: self.dist(h, nearest_enemy))
         else:
