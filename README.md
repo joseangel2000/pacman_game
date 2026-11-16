@@ -42,33 +42,38 @@ root); every other folder is tooling to measure and improve that one file.
 
 ## 1. Current status
 
-- **Version: v4.2** = v4.1 + `seal=2` ("seal and squeeze": close **all** the invader's exits and our capsules,
-  then close in on it; section 8.3).
+- **Version: v4.3** = v4.2 + `pocket_safe=1` (the attacker only goes for food in a dead end if it can eat it and get
+  back out of the mouth before any ghost, seen or estimated, can reach that mouth; section 8.4). **Phase 2 (attack)
+  closed on 2026-11-16** with 3 of its 4 exit criteria met.
+- **v4.2** = v4.1 + `seal=2` ("seal and squeeze": close **all** the invader's exits and our capsules,
+  then close in on it; section 8.3). Phase 1 (defence) closed with this version.
 - **v4.1** = v4 + `intercept_fallback=1` (the missing half of playbook point 1, section 8.1).
 - **v4** is v3 (attack with stuck detection, Bayesian tracking of hidden opponents, dynamic
   roles) plus a new defence (interception on the invader's escape route, a "leash" on defender raids,
   dead-end handling). With `intercept`, `pocket_trap` and `leash_mode` set to 0, v3 is recovered exactly.
 - Everything switched on in `PARAMS` has been **measured** (section 8). Anything that did not help is
   implemented but **switched off**.
-- Time per action in the worst case measured: **~57 ms** for v4; v4.2: **36 ms** max in 6 timed games (the limit
-  is 1 s). Start-up: ~0.7 s (limit 15 s).
-- Compatible with **Python 3.8**: v4 was verified by playing complete games on 3.8.20; v4.2 has only been checked
-  for 3.8 *syntax* (`ast.parse(..., feature_version=(3, 8))`). **Play full games on a real 3.8 before submitting.**
+- Time per action in the worst case measured: **~57 ms** for v4; v4.2: **36 ms**; v4.3: **38 ms** max in 6 timed games
+  against `greedy_v4` (the limit is 1 s). Start-up: ~0.7 s (limit 15 s).
+- Compatible with **Python 3.8**: v4 was verified by playing complete games on 3.8.20; v4.2 and v4.3 have only been
+  checked for 3.8 *syntax* (`ast.parse(..., feature_version=(3, 8))`). **Play full games on a real 3.8 before
+  submitting.**
 
 Key results: wins-draws-losses, win rate and tournament points per game (win 3, draw 1, loss 0).
 
-| Against | v4 | v4.1 | **v4.2 (current)** |
+| Against | v4 | v4.2 | **v4.3 (current)** |
 |---|---|---|---|
-| Own league, 11 opponents, training maps (308 games) | 235-13-60 · 76 % · 2.33 | 237-13-58 · 77 % · 2.35 | **252-15-41 · 82 % · 2.50** |
-| Own league, **new** maps RANDOM101-112 (264) | 194-22-48 · 73 % · 2.29 | 194-24-46 · 73 % · 2.30 | **198-24-42 · 75 % · 2.34** |
-| `greedy_v4` (a classmate's agent, 500) | 146-59-295 · 29 % · 0.99 | 175-56-269 · 35 % · 1.16 | **204-83-213 · 41 % · 1.39** |
-| `greedy_v4`, **new** maps RANDOM301-400 (200) | 66-23-111 · 33 % · 1.10 | 75-18-107 · 38 % · 1.22 | **87-24-89 · 44 % · 1.43** |
+| Own league, 11 opponents, training maps (308 games) | 235-13-60 · 76 % · 2.33 | 252-15-41 · 82 % · 2.50 | **250-14-44 · 81 % · 2.48** |
+| Own league, **new** maps RANDOM101-112 (264) | 194-22-48 · 73 % · 2.29 | 198-24-42 · 75 % · 2.34 | **195-26-43 · 74 % · 2.31** |
+| `greedy_v4` (a classmate's agent, 500) | 146-59-295 · 29 % · 0.99 | 204-83-213 · 41 % · 1.39 | **240-79-181 · 48 % · 1.60** |
+| `greedy_v4`, **new** maps RANDOM301-400 (200) | 66-23-111 · 33 % · 1.10 | 87-24-89 · 44 % · 1.43 | **89-27-84 · 44 % · 1.47** |
 
-(v3 for reference: league 2.20, new maps 1.95, `greedy_v4` 0.81.) v4 numbers were re-measured on 2026-11-15 with
-freshly cloned opponents and reproduce the original ones (2.33 / 2.29 / 0.99).
+(v3 for reference: league 2.20, new maps 1.95, `greedy_v4` 0.81. v4.1: 2.35 / 2.30 / 1.16 / 1.22.) v4 numbers were
+re-measured on 2026-11-15 with freshly cloned opponents and reproduce the original ones (2.33 / 2.29 / 0.99).
 
-**Against `greedy_v4` we now win almost as often as we lose** (204 vs 213 out of 500). It deposits 10.6 food per
-game (14.3 with v4). The weakest point left is **how much food we deposit ourselves** (11.3 per game; see section 9).
+**Against `greedy_v4` we now win more often than we lose** (240 vs 181 out of 500), and our pacmans get eaten
+0.39 times per game (0.82 with v4.2). The weakest point left is still **how much food we deposit ourselves**: 12.0 per
+game versus his 10.0 (section 8.4 and section 9).
 
 ---
 
@@ -160,6 +165,7 @@ tools/
     descargar_rivales.py   downloads previous-edition teams into rivales_ext/
     diag_capsulas.py       capsule-loss diagnosis (instrumentation only; does not change any game)
     diag_defensa.py        "wait or hunt" diagnosis: what our defender does while there is an invader (same idea)
+    diag_ataque.py         attack diagnosis: every raid of ours, how it ends and why we die (same idea)
     empaquetar.py          builds an obfuscated copy of my_team.py to share privately
 scripts/                   ← scripts from the course template
 ```
@@ -209,6 +215,13 @@ we carry food; it heads home when it passes the threshold, when few moves remain
 close; **stuck detection** (`stuck_turns`): after a long time without eating or depositing, it commits to a
 pellet far from the ghosts.
 
+**Safe dead ends** (`pocket_safe=1`, v4.3). For a pellet `f` inside a dead end with mouth `m` (precomputed),
+`f` is only a target if `d(me, f) + d(f, m) < d(ghost, m)` for **every** threatening ghost: the ones we see (not
+scared) plus, for the hidden ones, the tracker's most likely cell (an *inference*). In a one-cell corridor we cannot
+get past a ghost, so if it reaches the mouth first we die. If no pellet is safe, all of them count as in v4.2; if
+there are safe pellets but no path reaches them while avoiding the ghosts, it goes for any pellet or capsule as in
+v4.2 rather than standing still.
+
 **Defence v4.2** (`defend`), in this order:
 
 1. If we are a Pacman, go home.
@@ -254,7 +267,8 @@ Summary by group (current values):
 
 | Group | Parameters (value) |
 |---|---|
-| Attack | `return_threshold` 6, `ghost_alert` 3, `danger_radius` 1, `avoid_pockets` 1, `pocket_min_carry` 1, `stuck_turns` 40 |
+| Attack | `return_threshold` 6, `ghost_alert` 3, `danger_radius` 1, `avoid_pockets` 1, `pocket_min_carry` 1, `stuck_turns` 40, **`pocket_safe` 1** |
+| Attack **off** | `pocket_safe` 2 and 3 (with `roam_depth`), `stuck_mode` |
 | Roles | `raid_threshold` 3, `passive_turns` 10, `scared_switch` 6, `help_carry` 20, `endgame_defend` 40 |
 | Defence **on** | `seal` 2, `intercept` 1, `intercept_min_carry` 3, `intercept_fallback` 1, `pocket_trap` 1, `leash_mode` 1, `leash_margin` 4, `leash_aggr` 0.1, `chase_dist` 2 |
 | Defence **off** | `seal_press`, `seal_patience`, `capsule_guard` (1 and 2), `capsule_contain`, `patrol_mode`, `gates`, `zone_split`, `pocket_kill`, `intercept_pick`/`slack`, `leash_mode` 2, `cut_exit`, `double_defense`, `stuck_defend` |
@@ -325,6 +339,21 @@ every turn of our defender with a real invader on our side: which branch decided
 chase / scared), whether it stood still or got closer, and whether the invader was in a dead end, visible or loaded.
 For every invasion: how it ended (deposited / eaten / went back empty / end of game), how long it lasted, how much
 it carried and, if it deposited, how far our nearest ghost was from the cell it crossed from.
+
+### `tools/diag_ataque.py` — why we deposit little and why we die
+
+```bash
+python tools/diag_ataque.py --rivales tian__greedy_v4 --mapas 40 --salida a.json --verificar mediciones/v43_greedy.json
+python tools/diag_ataque.py --resumen a.json --por-rival
+```
+
+Same approach (records only; it wraps `choose_action` to log the role of every turn). For every raid of ours
+(ghost → pacman → back): who (attacker or defender), how it ends (deposits / dies / comes back empty / end of game),
+duration and max carry; if it dies, the food lost, whether it was in a dead end, how far from home, how many ghosts
+within 3, and for how many moves the killer had been visible. Per game: how the attacker spends its turns (on their
+side / at home / **stuck at the border without crossing**), food deposited by each agent and while their ghosts were
+scared. `--verificar` gave 99/100 identical scores under full CPU load (the opponent is time-dependent; re-run
+unloaded, it reproduces).
 
 ### The rest
 
@@ -466,6 +495,65 @@ that game; neither has been measured on the full battery. Both are off.
 
 **Cost:** we deposit a bit less (−0.5 to −0.8 per game): the defender spends more time defending and raids less.
 
+### 8.4 v4.3 (2026-11-16): phase 2, attack, paired against v4.2
+
+**Exit criterion agreed before starting** (v4.3 against v4.2, same games): `greedy_v4` ≥ +0.15 pts; we deposit
+≥ +1.5 more against `greedy_v4`; our pacmans eaten −0.2 per game; league and new maps not down more than 0.07.
+
+**Why** (`tools/diag_ataque.py` with v4.2, 100 games vs `greedy_v4` and the 12 competitive opponents): **82-92 % of our
+attacker's deaths happen inside a dead end**, and in 95-97 % of them the ghost that kills it had been visible for 3 or
+more of our own turns: we see it coming and walk in anyway. The attacker also spends 21-24 % of its turns at the border
+without crossing. Against `greedy_v4` the attacker deposits 9.6 per game and the defender 2.4; 5.4 of those 12 are
+deposited while his ghosts are scared.
+
+The plan had three parts: **A** safe dead ends, **B** a border stall-breaker, **C** re-tune `PARAMS` with
+`aprender.py`. Difference B − A ± 1 paired standard error, against v4.2:
+
+| Variant | `greedy_v4` (500) | 12 competitive (336) | Weak: baseline, sta05, `rival_muro` (84) | Decision |
+|---|---|---|---|---|
+| **A: `pocket_safe=1`** (seen + estimated ghosts) | **+0.21 ± 0.06** | +0.06 ± 0.05 | −0.11 ± 0.05 | **On** |
+| A: `pocket_safe=2` (seen ghosts only) | +0.19 ± 0.06 | +0.03 ± 0.05 | −0.08 ± 0.05 | Off |
+| A: `pocket_safe=3` (only ghosts seen ≥ `roam_depth` deep in their half) | +0.15 ± 0.05 | +0.00 ± 0.04 | −0.06 ± 0.04 | Off |
+| B: `stuck_mode=1` (stuck: my distance goes *around* the danger zone) | +0.03 ± 0.03 | −0.01 ± 0.04 | +0.02 ± 0.02 | Off |
+
+`pocket_safe=1` in detail, and its validation on data not used to decide:
+
+| Set | pts | we deposit | they deposit | our pacmans eaten |
+|---|---|---|---|---|
+| `greedy_v4` (500) | **+0.21 ± 0.06** | +0.69 ± 0.28 | −0.64 ± 0.34 | **−0.43 ± 0.04** (0.82 → 0.39) |
+| 12 competitive (336) | +0.06 ± 0.05 | +0.65 ± 0.32 | −0.28 ± 0.22 | −0.27 ± 0.04 |
+| Full league, training maps (308) | −0.02 ± 0.04 | +0.20 ± 0.33 | −0.09 ± 0.22 | −0.31 ± 0.05 |
+| League, **new** maps RANDOM101-112 (264) | −0.03 ± 0.06 | +0.74 ± 0.37 | +0.53 ± 0.28 | −0.23 ± 0.05 |
+| `greedy_v4`, **new** maps RANDOM301-400 (200) | +0.04 ± 0.11 | +0.95 ± 0.42 | +0.10 ± 0.48 | −0.37 ± 0.06 |
+| 4 extra teams, new maps (96) | +0.21 ± 0.10 | +2.80 ± 0.69 | +0.34 ± 0.58 | −0.43 ± 0.10 |
+
+**C: re-tuning** (`aprender.py --no-escribir --pasadas 1 --random 4`, 9 attack/role parameters, 25 candidates of 420
+games each against baseline, the 5 opponents in `opponents/`, `greedy_v4` and the 8 competitive previous-edition
+teams). Only `return_threshold`
+6 → 8 passed the training margin (+0.04 pts); on the validation maps RANDOM101-115 (450 games) it gave **+0.00**, and
+paired with our protocol `greedy_v4` −0.03 ± 0.06, competitive −0.01. Discarded. Clearly worse in training (single
+run, not paired): `return_threshold` 3 or 4, `danger_radius` 2, `stuck_turns` 15 or 25 (−0.08 to −0.16).
+
+**Exit criterion: 3 of 4 met.**
+
+| Criterion | Target | v4.3 vs v4.2 | |
+|---|---|---|---|
+| Points against `greedy_v4` | ≥ +0.15 (≥ 1.54) | +0.21 (1.60) | ✔ |
+| Food we deposit against `greedy_v4` | ≥ +1.5 | +0.69 | ✘ |
+| Our pacmans eaten per game | ≤ −0.2 | −0.43 | ✔ |
+| League and new maps | ≥ −0.07 | league −0.02, new maps −0.03, `greedy_v4` new maps +0.04 | ✔ |
+
+**What changed and what did not** (measured): `pocket_safe=1` halves our deaths, which is where the points come
+from: we lose much less food on the way. It does **not** make us deposit much more, and the time stuck at the border
+did not go down (24 % → 26 % of the attacker's turns, `diag_ataque.py` with `pocket_safe=1` before the last fallback
+was added, 100 games vs `greedy_v4`).
+
+**Known weakness: defenders that wall the border.** Against `rival_muro` (two defenders splitting the border) and
+sta05, the attacker refuses most dead-end food while their ghosts stand nearby (on RANDOM4, 20 of the 30 pellets
+are in dead ends): weak teams −0.11 (`rival_muro` −0.14, sta05 −0.18). `pocket_safe=3` was designed for this (a
+ghost that never comes deep into its own half does not count) and recovers that game, but is weaker against
+`greedy_v4` (+0.15 vs +0.21). Kept off.
+
 ### 8.2 Capsules: diagnosis (`tools/diag_capsulas.py`, 100 games vs `greedy_v4`)
 
 - **Why `capsule_guard=1` did nothing** (verified + measured). If `route_cell` finds a cell `c` on the invader's
@@ -500,7 +588,8 @@ that game; neither has been measured on the full battery. Both are off.
 ### Discarded or no effect (switched off, but the code is there)
 
 `gates`, `zone_split`, `capsule_guard` (1 and 2), `capsule_contain`, `patrol_mode=1`, `seal=1`, `pocket_kill`, `intercept_pick=1`, `intercept_slack=1`,
-`chase_dist=4`, `leash_mode=2`, `cut_exit`, `double_defense`, `stuck_defend`, `raid_max_aggr`.
+`chase_dist=4`, `leash_mode=2`, `cut_exit`, `double_defense`, `stuck_defend`, `raid_max_aggr`; attack (phase 2):
+`pocket_safe` 2 and 3, `stuck_mode=1`, `return_threshold=8`.
 
 ---
 
@@ -508,13 +597,16 @@ that game; neither has been measured on the full battery. Both are off.
 
 1. **Capsules: diagnosed and tried (section 8.2).** Reducing capsule losses did not turn into points. Do not
    retry without a new reason.
-2. **Attack** (phase 2): against `greedy_v4` (v4.2) we deposit 11.3 versus his 10.6, and we get eaten about 0.8
-   times per game. v4.2 made our deposits drop a little (−0.5 to −0.8): that is now the main lever.
-3. **Done:** the omitted half of playbook point 1 (`intercept_fallback`, v4.1) and waiting vs hunting (`seal=2`, v4.2).
-4. **Stand-off against parked invaders** (section 8.3, lorecleme): e.g. call the attacker back to squeeze with two,
+2. **Deposit more** (the criterion phase 2 did not meet): against `greedy_v4` (v4.3) we deposit 12.0 versus his
+   10.0 and only get eaten 0.39 times per game, so dying is no longer the problem. The attacker still spends about a
+   quarter of its turns at the border without crossing. Start by running `tools/diag_ataque.py` on v4.3 to see where
+   those turns go. Neither a smarter stuck target (`stuck_mode=1`) nor re-tuned thresholds (C) helped.
+3. **Walls at the border** (section 8.4): `pocket_safe=1` is too cautious against defenders that stay near their
+   border (`rival_muro`, sta05).
+4. **Done:** the omitted half of playbook point 1 (`intercept_fallback`, v4.1), waiting vs hunting (`seal=2`, v4.2),
+   safe dead ends (`pocket_safe=1`, v4.3) and re-learning the attack `PARAMS` with `greedy_v4` in the league (no change).
+5. **Stand-off against parked invaders** (section 8.3, lorecleme): e.g. call the attacker back to squeeze with two,
    or give up the seal; measure `seal_patience` on the full battery first.
-5. **Re-learn the `PARAMS`** with `tools/aprender.py`, adding a `greedy_v4`-style opponent to the league
-   (`--externos ...`). Do it with `--no-escribir` first.
 6. Richer coordination between the two agents (today: dynamic roles and man-to-man assignment).
 
 ---
@@ -526,7 +618,8 @@ that game; neither has been measured on the full battery. Both are off.
       better, play full games with a real 3.8).
 - [ ] No debug `print`s and no disk writes.
 - [ ] `python tools/defensa_bench.py` runs with no errors, no crashes and no time warnings.
-- [ ] Worst per-action time well below 1 s (v4: ~57 ms; v4.2: 36 ms in 6 timed games) and start-up well below 15 s.
+- [ ] Worst per-action time well below 1 s (v4: ~57 ms; v4.2: 36 ms; v4.3: 38 ms in 6 timed games) and start-up well
+      below 15 s.
 - [ ] `PACMAN_PARAMS` is for training only: it does not exist in the tournament.
 - [ ] `TEAM.md` filled in.
 - [ ] No other teams' code in the repo (`rivales_ext/` is ignored).

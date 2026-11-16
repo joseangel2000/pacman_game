@@ -1,6 +1,6 @@
 # my_team.py
 # ---------------
-# Equipo v4.2 para el EUTOPIA Pacman Contest (Autonomous Systems, EMAI 2026-27).
+# Equipo v4.3 para el EUTOPIA Pacman Contest (Autonomous Systems, EMAI 2026-27).
 #
 # Estructura:
 #   - PARAMS: números que controlan el comportamiento. Los ajusta
@@ -38,12 +38,21 @@ PARAMS = {
     'ghost_alert': 3,          # distancia a la que un fantasma nos hace volver/huir
     'avoid_pockets': 1,        # 1 = evitar callejones sin salida con fantasma cerca
     'pocket_min_carry': 1,     # ...solo si llevamos al menos esta comida (sin comida, morir cuesta poco)
+    'pocket_safe': 1,          # 1 = solo ir a comida de un callejón si puedo cogerla y salir por la boca antes de que
+                               #     llegue ningún fantasma (visto o estimado). Medido: 82-92 % de nuestras muertes son en callejones
+                               # 2 = igual, pero solo con fantasmas VISTOS (hechos, no estimaciones del tracker)
+                               # 3 = como 2, pero solo cuenta un fantasma si en ESTA partida lo hemos visto a
+                               #     >= roam_depth de su frontera (persigue); un "muro" quieto no paraliza
+    'roam_depth': 5,           # ...profundidad (pasos hasta su frontera) para considerar que un fantasma persigue
     'double_defense': 0,       # 1 = el atacante vuelve a defender ante 2 invasores
     'double_defense_carry': 0, # ...solo si entre los dos invasores llevan al menos esto
     'double_defense_dist': 99, # ...solo si el atacante está a esta distancia de casa o menos
     'help_carry': 20,          # el atacante ayuda a defender si UN invasor lleva esto o más
     'scared_raid_max_carry': 99,  # asustado, el defensor solo ataca si el invasor lleva menos que esto
     'stuck_turns': 40,         # turnos sin comer para que el atacante cambie de entrada (999 = nunca)
+    'stuck_mode': 0,           # atascado, a qué comida me comprometo: 0 = max d(guardia,f) - d(yo,f) (v4.2)
+                               # 1 = igual pero con MI distancia rodeando la zona de peligro (BFS): la comida
+                               #     detrás de un guardia que tapa la entrada deja de parecer cercana
     'stuck_defend': 0,         # si el atacante está atascado, defiende estos turnos antes de reintentar
     'raid_max_aggr': 1.0,      # el defensor solo incursiona si el rival invade menos de esta fracción del tiempo
     'cut_exit': 0,             # 1 = el defensor corta la salida del invasor en vez de perseguirlo
@@ -273,6 +282,7 @@ class TeamBrain:
         self.last_invasion = None   # timeleft de la última vez que algún rival era Pacman
         self.roles = {}             # índice de agente -> rol en su último turno
         self.invasion_history = deque(maxlen=200)  # ¿había invasor? en los últimos turnos (perfil del rival)
+        self.roam = {}              # rival -> máxima distancia a su frontera a la que lo hemos VISTO como fantasma
 
     def update(self, agent, game_state):
         tl = game_state.data.timeleft
@@ -282,6 +292,14 @@ class TeamBrain:
         if invaded:
             self.last_invasion = tl
         self.invasion_history.append(invaded)
+        for e in agent.get_opponents(game_state):
+            st = game_state.get_agent_state(e)
+            pos = st.get_position()
+            if pos is not None and not st.is_pacman:
+                pos = (int(pos[0]), int(pos[1]))
+                d = agent.gate_dist.get(pos, 0)   # pasos hasta nuestra frontera ~ profundidad en su campo
+                if d > self.roam.get(e, 0):
+                    self.roam[e] = d
 
     def aggressiveness(self):
         """Fracción de los últimos turnos en que el rival tenía algún invasor."""
@@ -500,6 +518,18 @@ class SmartAgent(CaptureAgent):
             if d > best_val:
                 best, best_val = a, d
         return best
+
+    def bfs_dist(self, start, blocked):
+        """Distancias desde start sin pisar 'blocked' (start siempre cuenta)."""
+        dist = {start: 0}
+        frontier = deque([start])
+        while frontier:
+            c = frontier.popleft()
+            for n in Actions.get_legal_neighbors(c, self.walls):
+                if n not in dist and n not in blocked:
+                    dist[n] = dist[c] + 1
+                    frontier.append(n)
+        return dist
 
     def danger_zone(self, positions, radius=1):
         """Casillas a distancia <= radius de alguna posición."""
@@ -789,6 +819,28 @@ class SmartAgent(CaptureAgent):
 
     # ---------- ataque ----------
 
+    def pocket_threats(self, game_state, seen_ghosts):
+        """Fantasmas rivales que pueden comernos: los vistos (ya filtrados por susto) y, para los que no
+        vemos, la posición más probable del tracker (INFERENCIA) si no están asustados."""
+        threats = list(seen_ghosts)
+        for e in self.get_opponents(game_state):
+            st = game_state.get_agent_state(e)
+            if st.is_pacman or st.scared_timer > 2 or st.get_position() is not None:
+                continue
+            est = self.tracker.most_likely(e)
+            if est is not None:
+                threats.append(est)
+        return threats
+
+    def pocket_food_safe(self, my_pos, f, threats):
+        """Comida f de un callejón: segura si d(yo, f) + d(f, boca) < d(fantasma, boca) para todos.
+        En un pasillo de 1 casilla no se puede cruzar a un fantasma: si llega antes a la boca, morimos."""
+        m = self.pocket_mouth.get(f)
+        if m is None:
+            return True
+        t = self.dist(my_pos, f) + self.dist(f, m)
+        return all(t < self.dist(g, m) for g in threats)
+
     def attack(self, game_state, threshold, force_home=False, leash=False):
         my_state = game_state.get_agent_state(self.index)
         my_pos = my_state.get_position()
@@ -828,6 +880,24 @@ class SmartAgent(CaptureAgent):
                 return self.defend(game_state)
         else:
             food_t = food
+
+        safe_ok = None
+        food_unfiltered = None
+        if PARAMS['pocket_safe']:
+            if PARAMS['pocket_safe'] == 1:
+                threats = self.pocket_threats(game_state, ghosts)
+            elif PARAMS['pocket_safe'] == 3:
+                threats = [st.get_position() for e, st in self.visible_enemies(game_state)
+                           if not st.is_pacman and st.scared_timer <= 2
+                           and self.brain.roam.get(e, 0) >= PARAMS['roam_depth']]
+            else:
+                threats = list(ghosts)
+            if threats:
+                safe_food = [f for f in food_t if self.pocket_food_safe(my_pos, f, threats)]
+                safe_ok = lambda f: self.pocket_food_safe(my_pos, f, threats)
+                if safe_food:
+                    food_unfiltered = food_t
+                    food_t = safe_food   # si no queda ninguna segura, como en v4.2 (no nos paralizamos)
 
         go_home = (
             force_home
@@ -869,8 +939,19 @@ class SmartAgent(CaptureAgent):
                         est = self.tracker.most_likely(e)
                         if est is not None:
                             guards.append(est)
-                if guards and food:
-                    self.commit_target = max(food, key=lambda f: min(self.dist(f, g) for g in guards)
+                cand = food
+                if safe_ok is not None:
+                    cand = [f for f in food if safe_ok(f)] or food
+                if guards and cand and PARAMS['stuck_mode'] == 1:
+                    # Mi distancia rodeando la zona de peligro; comida inalcanzable así queda fuera.
+                    dmine = self.bfs_dist(my_pos, danger)
+                    reach = [f for f in cand if f in dmine]
+                    if reach:
+                        self.commit_target = max(reach, key=lambda f: min(self.dist(f, g) for g in guards)
+                                                 - dmine[f])
+                        self.commit_until = tl - 4 * 40
+                elif guards and cand:
+                    self.commit_target = max(cand, key=lambda f: min(self.dist(f, g) for g in guards)
                                              - self.dist(my_pos, f))
                     self.commit_until = tl - 4 * 40
             if self.commit_target in food:
@@ -895,6 +976,10 @@ class SmartAgent(CaptureAgent):
         if act is None and blocked is not danger:
             # Sin camino evitando callejones: probamos solo evitando al fantasma.
             act = self.bfs_first_action(game_state, food_t + capsules, danger)
+        if act is None and food_unfiltered is not None:
+            # Ninguna comida segura es alcanzable: como en v4.2, antes que quedarnos parados.
+            act = self.bfs_first_action(game_state, food_unfiltered + capsules, blocked) \
+                or self.bfs_first_action(game_state, food_unfiltered + capsules, danger)
         if act is not None:
             return act
         if near_ghosts:
