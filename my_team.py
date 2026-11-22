@@ -39,7 +39,7 @@ PARAMS = {
     'avoid_pockets': 1,        # 1 = evitar callejones sin salida con fantasma cerca
     'pocket_min_carry': 1,     # ...solo si llevamos al menos esta comida (sin comida, morir cuesta poco)
     'pocket_safe': 1,          # 1 = solo ir a comida de un callejón si puedo cogerla y salir por la boca antes de que
-                               #     llegue ningún fantasma (visto o estimado). Medido: 82-92 % de nuestras muertes son en callejones
+                               #     llegue ningún fantasma (visto o estimado)
                                # 2 = igual, pero solo con fantasmas VISTOS (hechos, no estimaciones del tracker)
                                # 3 = como 2, pero solo cuenta un fantasma si en ESTA partida lo hemos visto a
                                #     >= roam_depth de su frontera (persigue); un "muro" quieto no paraliza
@@ -80,7 +80,7 @@ PARAMS = {
                                #     solo aprieta (sin cápsulas) cuando está a más de capsule_radius de todas
     'seal_press': 0,           # 0 = sellando, preferir margen >= 1 y luego acercarse
                                # 1 = con el invasor VISIBLE, acercarse manda; 2 = acercarse manda siempre
-                               #     (bloqueo medido contra lorecleme: invasor oculto quieto y sellado ~500 turnos)
+                               #     (evita quedarse sellando sin fin a un invasor que no se mueve)
     'seal_patience': 0,        # >0 = si sellando no me acerco a él en estos turnos seguidos, dejo de sellar hasta que
                                #     acabe la invasión (vuelvo a v4.1). 0 = sin límite
     'gates': 0,                # 1 = sin invasores, esperar en el punto que cubre las puertas ponderadas por comida/rival
@@ -671,9 +671,8 @@ class SmartAgent(CaptureAgent):
     def capsule_contain_action(self, game_state, my_pos, ipos, can_eat):
         """Contención de la cápsula. Diseño nuestro (HIPÓTESIS), inspirado en el juego de "guardar un
         objetivo" (Isaacs): la cápsula solo está a salvo si queda en MI región de dominancia, es decir,
-        si llego a su ruta hacia ella antes que él. Medido contra greedy_v4: al entrar en el radio de la
-        cápsula casi nunca estamos más cerca que él, y en ~50-60 % de las cápsulas perdidas teníamos un
-        fantasma a <= 3 justo antes. Por eso, si él gana la carrera, no le presionamos: rodeamos.
+        si llego a su ruta hacia ella antes que él. Si él gana la carrera no le presionamos: rodeamos,
+        porque acosarle solo le empuja a cogerla.
         ipos puede ser una ESTIMACIÓN del tracker. Devuelve None si no hay cápsula en juego."""
         caps = self.get_capsules_you_are_defending(game_state)
         if not caps:
@@ -1076,8 +1075,8 @@ class SmartAgent(CaptureAgent):
                 close = target[2] and self.dist(my_pos, tpos) <= PARAMS['chase_dist']
                 if PARAMS['capsule_guard'] == 2 and i_cut and close and self.dist(my_pos, tpos) > 1:
                     # Libro p.3: con la cápsula en juego, ponerse en medio tiene prioridad sobre
-                    # perseguirle (salvo que pueda comérmelo en este movimiento). Medido: en ~50 % de
-                    # las cápsulas perdidas teníamos un fantasma a <= 3 justo antes (la usa para huir).
+                    # perseguirle (salvo que pueda comérmelo en este movimiento): un invasor acosado
+                    # usa la cápsula para escapar.
                     act = self.capsule_guard_action(game_state, my_pos, invaders)
                     if act is not None:
                         return act
