@@ -1,6 +1,6 @@
 # my_team.py
 # ---------------
-# Equipo v4.3 para el EUTOPIA Pacman Contest (Autonomous Systems, EMAI 2026-27).
+# Equipo v4.4 para el EUTOPIA Pacman Contest (Autonomous Systems, EMAI 2026-27).
 #
 # Estructura:
 #   - PARAMS: números que controlan el comportamiento. Los ajusta
@@ -56,7 +56,8 @@ PARAMS = {
     'stuck_defend': 0,         # si el atacante está atascado, defiende estos turnos antes de reintentar
     'raid_max_aggr': 1.0,      # el defensor solo incursiona si el rival invade menos de esta fracción del tiempo
     'cut_exit': 0,             # 1 = el defensor corta la salida del invasor en vez de perseguirlo
-    'endgame_defend': 40,      # turnos finales en los que, si ganamos, defendemos
+    'endgame_defend': 0,       # turnos finales en los que, si ganamos, defendemos (0 = nunca)
+                               #     Atrincherarse al final cuesta ataque y no frena al rival.
     # --- Defensa v4 (playbook). Con estos valores a 0 se recupera el comportamiento v3. ---
     'intercept': 1,            # 1 = salir al paso del invasor en su ruta de huida (en vez de perseguirlo por detrás)
     'intercept_min_carry': 3,  # ...solo si el invasor lleva al menos esta comida
